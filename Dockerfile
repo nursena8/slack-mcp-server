@@ -1,42 +1,28 @@
-FROM golang:1.24 AS build
+FROM golang:1.23 AS build
 
 ENV CGO_ENABLED=0
-ENV GOTOOLCHAIN=local
-ENV GOCACHE=/go/pkg/mod
+WORKDIR /src
 
-RUN apt-get update  \
-  && apt-get install -y --no-install-recommends net-tools curl
-
-WORKDIR /app
-
+# Preload modules for better caching
 COPY go.mod go.sum ./
+RUN go mod download
 
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+# Copy the rest and build
+COPY . .
+RUN go build -ldflags="-s -w" -o /out/mcp-server ./cmd/slack-mcp-server
 
-COPY . /app
+# ---- Production stage ----
+FROM alpine:3.20
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go build -ldflags="-s -w" -o /go/bin/mcp-server ./cmd/slack-mcp-server
+# Certificates only; keep image small
+RUN apk add --no-cache ca-certificates curl
 
-FROM build AS dev
+# Copy binary
+COPY --from=build /out/mcp-server /usr/local/bin/mcp-server
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go install github.com/go-delve/delve/cmd/dlv@v1.25.0 && cp /go/bin/dlv /dlv
-
-WORKDIR /app/mcp-server
-
+# Railway provides $PORT. Default to 3001 for local runs.
+ENV PORT=3001
 EXPOSE 3001
 
-CMD ["mcp-server", "--transport", "sse"]
-
-FROM alpine:3.22 AS production
-
-RUN apk add --no-cache ca-certificates net-tools curl
-
-COPY --from=build /go/bin/mcp-server /usr/local/bin/mcp-server
-
-WORKDIR /app
-
-EXPOSE 3001
-
-CMD ["mcp-server", "--transport", "sse"]
+# IMPORTANT: bind to $PORT so Railway sees the service as healthy
+CMD ["sh", "-c", "mcp-server --transport sse --port ${PORT}"]
