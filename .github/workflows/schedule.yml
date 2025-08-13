@@ -2,9 +2,14 @@ name: Start and Stop Slack MCP Server on Schedule
 
 on:
   schedule:
-    # Times are in UTC — Turkey is UTC+3
-    - cron: "0 9 * * *"  # 12:00 PM Turkey time
-    - cron: "0 17 * * *" # 8:00 PM Turkey time
+    # GitHub cron is UTC; Türkiye is UTC+3 year-round
+    - cron: "0 9 * * *"   # 12:00 TR → START
+    - cron: "0 17 * * *"  # 20:00 TR → STOP
+  workflow_dispatch: {}    # allow manual runs
+
+concurrency:
+  group: railway-scheduler
+  cancel-in-progress: true
 
 jobs:
   control-service:
@@ -15,19 +20,28 @@ jobs:
           RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
         run: |
+          set -euo pipefail
+          if [ -z "${RAILWAY_API_KEY:-}" ] || [ -z "${RAILWAY_SERVICE_ID:-}" ]; then
+            echo "Missing secrets RAILWAY_API_KEY or RAILWAY_SERVICE_ID" >&2
+            exit 1
+          fi
+
           HOUR=$(date -u +%H)
           if [ "$HOUR" -eq 9 ]; then
-            echo "Starting service..."
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $RAILWAY_API_KEY" \
-              https://backboard.railway.app/graphql \
-              -d "{\"query\":\"mutation { serviceStart(id: \\\"$RAILWAY_SERVICE_ID\\\") { id } }\"}"
+            ACTION="serviceStart"
+            VERB="Starting"
           else
-            echo "Stopping service..."
-            curl -s -X POST \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $RAILWAY_API_KEY" \
-              https://backboard.railway.app/graphql \
-              -d "{\"query\":\"mutation { serviceStop(id: \\\"$RAILWAY_SERVICE_ID\\\") { id } }\"}"
+            ACTION="serviceStop"
+            VERB="Stopping"
           fi
+
+          echo "$VERB service $RAILWAY_SERVICE_ID at $(date -u) (UTC)"
+
+          RESP=$(curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $RAILWAY_API_KEY" \
+            https://backboard.railway.app/graphql \
+            -d "{\"query\":\"mutation { ${ACTION}(id: \\\"$RAILWAY_SERVICE_ID\\\") { id } }\"}")
+
+          echo "Railway response: $RESP"
+          echo "$RESP" | grep -qi '"errors"' && { echo "Railway returned an error." >&2; exit 1; }
