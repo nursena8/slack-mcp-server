@@ -1,28 +1,24 @@
-FROM golang:1.23 AS build
+# ---- Build stage ----
+FROM golang:1.23-bullseye AS build
+# (1) ensure git & certs exist for fetching modules
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-ENV CGO_ENABLED=0
+# (2) sane Go env; use proxy + verbose downloads
+ENV CGO_ENABLED=0 \
+    GO111MODULE=on \
+    GOPROXY=https://proxy.golang.org,direct \
+    GOSUMDB=sum.golang.org \
+    GOTOOLCHAIN=auto
+
 WORKDIR /src
 
-# Preload modules for better caching
+# (3) copy mod files first for better caching
 COPY go.mod go.sum ./
-RUN go mod download
 
-# Copy the rest and build
+# (4) download modules *verbosely* so we can see the failing module
+RUN go mod download -x
+
+# (5) now copy sources and build
 COPY . .
 RUN go build -ldflags="-s -w" -o /out/mcp-server ./cmd/slack-mcp-server
-
-# ---- Production stage ----
-FROM alpine:3.20
-
-# Certificates only; keep image small
-RUN apk add --no-cache ca-certificates curl
-
-# Copy binary
-COPY --from=build /out/mcp-server /usr/local/bin/mcp-server
-
-# Railway provides $PORT. Default to 3001 for local runs.
-ENV PORT=3001
-EXPOSE 3001
-
-# IMPORTANT: bind to $PORT so Railway sees the service as healthy
-CMD ["sh", "-c", "mcp-server --transport sse --port ${PORT}"]
