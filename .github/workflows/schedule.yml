@@ -1,0 +1,33 @@
+name: Start and Stop Slack MCP Server on Schedule
+
+on:
+  schedule:
+    # Times are in UTC — Turkey is UTC+3
+    - cron: "0 9 * * *"  # 12:00 PM Turkey time
+    - cron: "0 17 * * *" # 8:00 PM Turkey time
+
+jobs:
+  control-service:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start or Stop Railway Service
+        env:
+          RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" -eq 9 ]; then
+            echo "Starting service..."
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $RAILWAY_API_KEY" \
+              https://backboard.railway.app/graphql \
+              -d "{\"query\":\"mutation { serviceStart(id: \\\"$RAILWAY_SERVICE_ID\\\") { id } }\"}"
+          else
+            echo "Stopping service..."
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $RAILWAY_API_KEY" \
+              https://backboard.railway.app/graphql \
+              -d "{\"query\":\"mutation { serviceStop(id: \\\"$RAILWAY_SERVICE_ID\\\") { id } }\"}"
+          fi
